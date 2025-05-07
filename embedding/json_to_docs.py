@@ -22,13 +22,12 @@ def convert_json_to_documents(data: list) -> list[Document]:
         제출 서류: {item.get("sbmsnDcmntCn", "정보 없음")}
         기타 사항: {item.get("etcMttrCn", "정보 없음")}
         추가 신청 자격: {item.get("addAplyQlfcCndCn", "정보 없음")}
-        사업 기간 기타 내용: {item.get("bizPrdEtcCn", "정보 없음")}
+        사업기간 기타내용: {item.get("bizPrdEtcCn", "정보 없음")}
         심사 방법: {item.get("srngMthdCn", "정보 없음")}
         지원대상 최소나이: {item.get("sprtTrgtMinAge", "정보 없음")}
         지원대상 최대나이: {item.get("sprtTrgtMaxAge", "정보 없음")}
         사업기간 시작일: {item.get("bizPrdBgngYmd", "정보 없음")}
         사업기간 종료일: {item.get("bizPrdEndYmd", "정보 없음")}
-        사업기간 기타내용: {item.get("bizPrdEtcCn", "정보 없음")}
         최초 등록일: {item.get("frstRegDt", "정보 없음")}
         최종 수정일: {item.get("lastMdfcnDt", "정보 없음")}
         신청기간: {item.get("aplyYmd", "정보 없음")}
