@@ -6,7 +6,9 @@ from langchain.schema import Document
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import Chroma
-from json_to_docs import load_json, convert_json_to_documents
+from embedding.json_to_docs import load_json, convert_json_to_documents
+from collections import defaultdict
+import itertools
       
 """지역 노드 생성을 위한 사전처리"""
 def extract_region_from_institution(name: str) -> str:
@@ -74,44 +76,37 @@ def build_policy_graph(documents):
 
     # 2) 문서들 간의 관계를 찾고, 해당 관계가 확인되면 엣지를 추가
     # 등록기관, 주관기관, 정책 분류 등이 같으면 엣지를 추가
-    for i in range(len(documents)):
-        for j in range(i + 1, len(documents)):
-            node_i = f"Policy_{i}"
-            node_j = f"Policy_{j}"
-
-            relation_list = []
-
-            # 정책 대분류 동일 여부
-            if All_G.nodes[node_i]["policy_category"] and \
-               All_G.nodes[node_i]["policy_category"] == All_G.nodes[node_j]["policy_category"]:
-                relation_list.append("same_policy_category")
-
-            # 정책 중분류 동일 여부
-            if All_G.nodes[node_i]["policy_subcategory"] and \
-               All_G.nodes[node_i]["policy_subcategory"] == All_G.nodes[node_j]["policy_subcategory"]:
-                relation_list.append("same_policy_subcategory")
-
-            #지역 동일 여부
-            if All_G.nodes[node_i]["region"] and \
-               All_G.nodes[node_i]["region"] == All_G.nodes[node_j]["region"]:
-                relation_list.append("same_region")
-
-            # 키워드 비교 (가중치 적용)
+    buckets = defaultdict(list)
+    for idx, doc in enumerate(documents):
+        reg = extract_region_from_institution(
+            doc.metadata.get("registering_institution", "")
+        )
+        cat = doc.metadata.get("policy_category", "")
+        buckets[(reg, cat)].append(idx)
+    
+    for bucket in buckets.values():
+        for i, j in itertools.combinations(bucket, 2):
+            node_i, node_j = f"Policy_{i}", f"Policy_{j}"
+            relation_list  = []
+    
+            # 중분류 동일
+            if All_G.nodes[node_i]["policy_subcategory"] == \
+               All_G.nodes[node_j]["policy_subcategory"]:
+               relation_list.append("same_policy_subcategory")
+    
+            # 키워드 교집합
             kws_i = set(All_G.nodes[node_i]["policy_keywords"].split(", "))
             kws_j = set(All_G.nodes[node_j]["policy_keywords"].split(", "))
-
-            common_keywords = kws_i & kws_j  # 교집합 키워드
-            keyword_similarity_score = len(common_keywords)
-
-            # 키워드 교집합이 존재할 때만 엣지 추가
-            if keyword_similarity_score > 0:
-                relation_list.append(f"shared_keywords ({keyword_similarity_score})")
-
-            # 최종적으로 관계가 1개라도 존재하면 엣지 추가
+            common = kws_i & kws_j
+            if common:
+                relation_list.append(f"shared_keywords ({len(common)})")
+    
             if relation_list:
-                # 엣지의 가중치는 최소 1로 하고, 키워드 개수가 많으면 가중치를 높임
-                weight = max(1, keyword_similarity_score)
-                All_G.add_edge(node_i, node_j, relation=", ".join(relation_list), weight=weight)
+                All_G.add_edge(
+                    node_i, node_j,
+                    relation=", ".join(relation_list),
+                    weight=max(1, len(common))
+                )
 
     return All_G
 
@@ -156,42 +151,26 @@ def convert_graph_to_documents(graph: nx.Graph) -> list[Document]:
     return graph_documents 
 
 """청크 분할"""
-def chunk_documents(docs: list[Document]) -> list[Document]:
-    autodevice = "cuda" if torch.cuda.is_available() else "cpu"
-    
-    embedding_model = HuggingFaceEmbeddings(
-        model_name="intfloat/multilingual-e5-large",
-        model_kwargs={"device":autodevice},
-        encode_kwargs={"batch_size":32}
-        )
-    
+def chunk_documents(docs: list[Document], embedder) -> list[Document]:
     # SemanticChunker 생성
-    semantic_splitter = SemanticChunker(embedding_model)
+    splitter = SemanticChunker(embedder)
     semantically_split_documents = []
     for doc in docs:
-        chunks = semantic_splitter.split_documents([doc])
+        chunks = splitter.split_documents([doc])
         semantically_split_documents.extend(chunks)
       
     print(f"SemanticChunker로 의미 기반 2차 분할 완료 → {len(semantically_split_documents)}개 청크")
     return semantically_split_documents
 
 """청크 벡터화 후 ChromaDB에 저장"""
-def embed_and_save_chunks(chunks: list[Document], base_dir: str):
-    autodevice = "cuda" if torch.cuda.is_available() else "cpu"
-    # 임베딩
-    embedding_model = HuggingFaceEmbeddings(
-        model_name="intfloat/multilingual-e5-large",
-        model_kwargs={"device":autodevice},
-        encode_kwargs={"batch_size":32}
-        )
-    
+def embed_and_save_chunks(chunks: list[Document], embedder, project_root: str): 
     # Chroma DB 저장
-    persist_directory = os.path.join(base_dir, "chroma_db/Graph_all")
+    persist_directory = os.path.join(project_root, "chroma_db", "Graph_all")
     os.makedirs(persist_directory, exist_ok=True)
     
     Gdb_full = Chroma.from_documents(
         documents=chunks,
-        embedding=embedding_model,
+        embedding=embedder,
         persist_directory=persist_directory
     )
     
@@ -202,26 +181,38 @@ def embed_and_save_chunks(chunks: list[Document], base_dir: str):
 
 
 def main():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    # JSON 로드
-    json_path = os.path.join(base_dir, "data", "YouthPolicy_data.json")
+    #디렉토리 설정
+    script_dir   = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(os.path.dirname(script_dir))
+      
+    #임베딩 모델 설정
+    embedder = HuggingFaceEmbeddings(
+    model_name="intfloat/multilingual-e5-large",
+    model_kwargs={"device":"cuda" if torch.cuda.is_available() else "cpu"},
+    encode_kwargs={"batch_size":32, "normalize_embeddings":True}
+    )
+
+    # JSON 로드 -> Doc 
+    json_path    = os.path.join(project_root, "data", "YouthPolicy_data.json")
     data = load_json(json_path)
     documents = convert_json_to_documents(data)
-  
-    #그래프 빌드
+
+    # Doc -> 그래프 빌드
     graph = build_policy_graph(documents)
     print("그래프 노드 수:", graph.number_of_nodes())
     print("그래프 엣지 수:", graph.number_of_edges())
-    #그래프 저장
-    save_path = os.path.join(base_dir, "graph")
+
+    # 그래프 저장
+    save_path = os.path.join(project_root, "graph")
     os.makedirs(save_path, exist_ok=True) #폴더 없으면 생성
     gml_path = os.path.join(save_path, "policy_graph_all.gml")
     nx.write_gml(graph, gml_path)
     print("GML 그래프 저장 완료:", gml_path)
-  
-    node_docs = convert_graph_to_documents(graph)
-    chunks = chunk_documents(node_docs)
-    embed_and_save_chunks(chunks, base_dir)
 
+    # 그래프 -> Doc -> Chunk 분할 -> 벡터DB 임베딩
+    node_docs = convert_graph_to_documents(graph)
+    chunks    = chunk_documents(node_docs, embedder)
+    embed_and_save_chunks(chunks, embedder, project_root) 
+      
 if __name__ == "__main__":
     main()
