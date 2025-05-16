@@ -1,7 +1,8 @@
-import os, json, re, unicodedata, itertools
-from collections import Counter, defaultdict
+import os, json, re, unicodedata, itertools, time
+from collections import Counter
 import networkx as nx
 import torch
+from tqdm import tqdm
 from langchain.schema import Document
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -166,11 +167,17 @@ def chunk_and_embed(docs, persist_dir):
         model_name="intfloat/multilingual-e5-large",
         model_kwargs={"device":"cuda" if torch.cuda.is_available() else "cpu"},
         encode_kwargs={"batch_size":32,"normalize_embeddings":True})
-    chunks=SemanticChunker(embedder).split_documents(docs)
-    Chroma.from_documents(chunks, embedder, persist_directory=persist_dir).persist()
+  
+    splitter = SemanticChunker(embedder)
+    chunks = []
+    for doc in tqdm(docs, desc="서브그래프 -> 청크 분할"):
+        chunks.extend(splitter.split_documents([doc]))
+    Chroma.from_documents(chunks, embedder, persist_directory=str(persist_dir)).persist()
+    print("서브그래프 Chroma 임베딩 저장 완료 ->", persist_dir)
 
 # main
 def main():
+    t0 = time.time()
     script=os.path.abspath(__file__)
     root  = os.path.dirname(os.path.dirname(script))   # embedding/
     data_path = os.path.join(os.path.dirname(root), "data", "YouthPolicy_data.json")
@@ -178,13 +185,14 @@ def main():
     persist_dir    = os.path.join(os.path.dirname(root), "chroma_db","Graph_sub_separate")
 
     cleaned=[preprocess_policy_fields(p) for p in load_json(data_path)]
-    conditions=generate_subgraph_conditions(cleaned, top_n=5)
-    for cond in conditions: create_subgraph(cond, cleaned, save_graph_dir)
+    conditions = generate_subgraph_conditions(cleaned, top_n=5)
+    for cond in tqdm(conditions, desc="서브그래프 생성"):
+        create_subgraph(cond, cleaned, save_graph_dir)
 
     docs=documents_from_subgraphs(save_graph_dir)
     chunk_and_embed(docs, persist_dir)
-    print("SubGraph 구축 및 임베딩 완료!")
-
+    print(f"\n SubGraph 파이프라인 완료! ({time.time()-t0:,.1f}s)")
+    
 if __name__=="__main__":
     main()
 
