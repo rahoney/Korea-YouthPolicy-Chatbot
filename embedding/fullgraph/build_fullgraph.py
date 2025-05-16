@@ -2,12 +2,14 @@ import networkx as nx
 import torch
 import json
 import os
+from tqdm import tqdm
 from langchain.schema import Document
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import Chroma
 from embedding.json_to_docs import load_json, convert_json_to_documents
 from collections import defaultdict
+from pathlib import Path
 import itertools
       
 """지역 노드 생성을 위한 사전처리"""
@@ -44,7 +46,7 @@ def build_policy_graph(documents):
     All_G = nx.Graph()
 
     # 1) 문서마다 노드 등록
-    for i, doc in enumerate(documents):
+    for i, doc in enumerate(tqdm(documents, desc="노드 등록")):
         node_id = f"Policy_{i}"
 
         # 키워드를 미리 set으로 처리하여 중복 제거
@@ -84,7 +86,7 @@ def build_policy_graph(documents):
         cat = doc.metadata.get("policy_category", "")
         buckets[(reg, cat)].append(idx)
     
-    for bucket in buckets.values():
+    for bucket in tqdm(buckets.values(), desc="엣지 연결"):
         for i, j in itertools.combinations(bucket, 2):
             node_i, node_j = f"Policy_{i}", f"Policy_{j}"
             relation_list  = []
@@ -109,9 +111,6 @@ def build_policy_graph(documents):
                 )
 
     return All_G
-
-
-
 
 """그래프의 노드를 LangChain Document로 변환"""
 def convert_graph_to_documents(graph: nx.Graph) -> list[Document]:
@@ -154,13 +153,11 @@ def convert_graph_to_documents(graph: nx.Graph) -> list[Document]:
 def chunk_documents(docs: list[Document], embedder) -> list[Document]:
     # SemanticChunker 생성
     splitter = SemanticChunker(embedder)
-    semantically_split_documents = []
-    for doc in docs:
-        chunks = splitter.split_documents([doc])
-        semantically_split_documents.extend(chunks)
-      
-    print(f"SemanticChunker로 의미 기반 2차 분할 완료 → {len(semantically_split_documents)}개 청크")
-    return semantically_split_documents
+    chunks = []
+    for doc in tqdm(docs, desc="문서 청크 분할"):
+        chunks.extend(splitter.split_documents([doc]))   
+    print(f"SemanticChunker 완료 → {len(chunks)}개 청크")
+    return chunks
 
 """청크 벡터화 후 ChromaDB에 저장"""
 def embed_and_save_chunks(chunks: list[Document], embedder, project_root: str): 
@@ -181,6 +178,8 @@ def embed_and_save_chunks(chunks: list[Document], embedder, project_root: str):
 
 
 def main():
+    start = time.time()
+      
     #디렉토리 설정
     script_dir   = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(os.path.dirname(script_dir))
@@ -213,6 +212,7 @@ def main():
     node_docs = convert_graph_to_documents(graph)
     chunks    = chunk_documents(node_docs, embedder)
     embed_and_save_chunks(chunks, embedder, project_root) 
+    print(f"\n 전체 수행 시간: {time.time() - start:,.1f}s")
       
 if __name__ == "__main__":
     main()
