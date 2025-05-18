@@ -123,7 +123,7 @@ def parse_user_query(user_input: str) -> Dict[str, Any]:
     }
 
 # ────────────────────────────────────────────────
-# 3) 온통청년 JSON 로드 & 가벼운 전처리
+# 3) JSON 로드 & 가벼운 전처리
 # ----------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_PATH = PROJECT_ROOT / "data" / "YouthPolicy_data.json"
@@ -185,48 +185,58 @@ def filter_policies_by_query(
 # ────────────────────────────────────────────────
 # 5) Chroma 벡터스토어 로드
 # ----------------------------------------------
+SUB_DB_DIR  = PROJECT_ROOT / "chroma_db" / "Graph_sub_separate"
+FULL_DB_DIR = PROJECT_ROOT / "chroma_db" / "Graph_all"
+
 embedder = HuggingFaceEmbeddings(
     model_name="intfloat/multilingual-e5-large",
     model_kwargs={"device": "cuda" if torch.cuda.is_available() else "cpu"},
     encode_kwargs={"batch_size": 32, "normalize_embeddings": True},
 )
 
-VECTOR_DIR = PROJECT_ROOT / "chroma_db" / "Graph_all"
-vectorstore = Chroma(persist_directory=str(VECTOR_DIR), embedding_function=embedder)
+sub_store  = Chroma(persist_directory=str(SUB_DB_DIR),  embedding_function=embedder)
+full_store = Chroma(persist_directory=str(FULL_DB_DIR), embedding_function=embedder)
 
 # ────────────────────────────────────────────────
 # 6) 하이브리드 리트리버
 # ----------------------------------------------
 def hybrid_retrieve(query: str, k: int = 5) -> List[Document]:
     """
-    1) 사용자 입력 파싱 → 메타 필터
-    2) Chroma MMR 검색 (where 필터)
-    3) 결과가 없으면 fallback 재검색
+    1) NLU → 메타 필터(allowed_ids)
+    2) SubGraph → MMR  (충분하면 바로 리턴)
+    3) 부족하면 FullGraph → MMR
+    4) MMR docs==0 → 동일 DB similarity_search로 fallback
     """
     parsed = parse_user_query(query)
-
-    # 메타 1차 필터
     allowed_ids = {
         d["plcyNo"] for d in filter_policies_by_query(parsed, cleaned_documents)
     }
+    where = {"doc_id": {"$in": list(allowed_ids)}} if allowed_ids else {}
 
-    # where 필터 dict
-    where_filter = {"doc_id": {"$in": list(allowed_ids)}} if allowed_ids else {}
+    # ── 1단계: SubGraph DB ───────────────────────
+    docs = _mmr_search(sub_store, query, k, where)
+    if len(docs) >= k:                # 충분하면 그대로 반환
+        return docs
 
-    # MMR 리트리버
-    retriever = vectorstore.as_retriever(
-        search_type="mmr",
-        search_kwargs={"k": k, "fetch_k": k * 4, "where": where_filter},
-    )
-    docs = retriever.get_relevant_documents(query)
-
-    # fallback (필터 결과 있는데 MMR -> 0개)
-    if not docs and allowed_ids:
-        raw = vectorstore.similarity_search(query, k=50)
-        docs = [d for d in raw if d.metadata.get("doc_id") in allowed_ids][:k]
-
+    # ── 2단계: FullGraph DB ─────────────────────
+    docs = _mmr_search(full_store, query, k, where)
     return docs
 
+
+def _mmr_search(store: Chroma, q: str, k: int, where: dict) -> List[Document]:
+    """MMR + 내부 fallback(similarity_search) 한 번만 래핑"""
+    retriever = store.as_retriever(
+        search_type="mmr",
+        search_kwargs={"k": k, "fetch_k": k * 4, "where": where},
+    )
+    docs = retriever.get_relevant_documents(q)
+
+    if not docs and where:  # fallback: same DB wide-search
+        raw = store.similarity_search(q, k=50)
+        docs = [d for d in raw if d.metadata.get("doc_id") in where["doc_id"]["$in"]][:k]
+
+    return docs
+    
 # ────────────────────────────────────────────────
 # 모듈 단독 실행 테스트
 # ----------------------------------------------
