@@ -17,5 +17,6 @@ networkx==3.3
 tqdm==4.67.1
 
 gradio>=4.25.0
-fastapi>=0.110.0, uvicorn[standard]
+fastapi>=0.110.0
+uvicorn[standard]
 click>=8.1
