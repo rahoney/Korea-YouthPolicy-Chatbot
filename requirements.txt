@@ -20,3 +20,4 @@ gradio>=4.25.0
 fastapi>=0.110.0
 uvicorn[standard]
 click>=8.1
+python-dotenv
