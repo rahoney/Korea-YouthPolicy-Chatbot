@@ -24,18 +24,18 @@ SUB_SCRIPT = BASE_DIR / "subgraph" / "build_subgraph.py"
 def run(step: str, script: Path) -> None:
     """단일 스텝 실행 + 경과시간 출력"""
     start = time.time()
-    print(f"\n [{step}] start → {script.relative_to(BASE_DIR)!s}")
-    subprocess.run([sys.executable, str(script)], check=True)
+    print(f"\n [{step}] start → {module_path}")
+    subprocess.run([sys.executable, "-m", module_path], check=True)
     elapsed = time.time() - start
     print(f" [{step}] done  ({elapsed:,.1f}s)")
 
 
 def main() -> None:
     """파이프라인 엔트리포인트"""
-    run("FULLGRAPH", FULL_SCRIPT)
+    run("FULLGRAPH", "embedding.fullgraph.build_fullgraph")
     print("\n 전체 그래프·벡터 임베딩 완료되었습니다!")
     print("\n 서브 그래프·벡터 임베딩 작업을 시작하겠습니다!")
-    run("SUBGRAPH", SUB_SCRIPT)
+    run("SUBGRAPH", "embedding.subgraph.build_subgraph")
     print("\n모든 작업을 완료되었습니다!")
 
 
