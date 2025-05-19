@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-FULL_SCRIPT = BASE_DIR / "fullgraph" / "build_graph.py"
+FULL_SCRIPT = BASE_DIR / "fullgraph" / "build_fullgraph.py"
 SUB_SCRIPT = BASE_DIR / "subgraph" / "build_subgraph.py"
 
 
