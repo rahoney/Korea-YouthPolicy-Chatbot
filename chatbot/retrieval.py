@@ -16,8 +16,8 @@ from typing import List, Dict, Any, Tuple, Set
 
 import torch
 from langchain.schema import Document
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
 
 # ────────────────────────────────────────────────
 # 1) 상수: 유의어·카테고리·지역 매핑
