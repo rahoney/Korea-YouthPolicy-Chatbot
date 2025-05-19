@@ -6,7 +6,7 @@ from tqdm import tqdm
 from langchain.schema import Document
 from langchain.text_splitter import MarkdownHeaderTextSplitter
 from langchain_experimental.text_splitter import SemanticChunker
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from embedding.json_to_docs import load_json
 
