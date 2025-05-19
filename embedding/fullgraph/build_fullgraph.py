@@ -11,6 +11,7 @@ from embedding.json_to_docs import load_json, convert_json_to_documents
 from collections import defaultdict
 from pathlib import Path
 import itertools
+import time
       
 """지역 노드 생성을 위한 사전처리"""
 def extract_region_from_institution(name: str) -> str:
