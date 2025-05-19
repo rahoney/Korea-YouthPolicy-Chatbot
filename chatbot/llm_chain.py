@@ -12,6 +12,7 @@ from chatbot.retrieval import hybrid_retrieve   # 리트리버 함수
 # ----------------------------------------------
 llm = ChatGoogleGenerativeAI(
     model="gemini-2.0-flash",
+    api_key=os.getenv("GOOGLE_API_KEY"),
     temperature=0.2,
     top_p=0.9
 )
