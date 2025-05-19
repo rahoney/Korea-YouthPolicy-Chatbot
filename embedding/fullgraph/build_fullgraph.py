@@ -5,7 +5,7 @@ import os
 from tqdm import tqdm
 from langchain.schema import Document
 from langchain_experimental.text_splitter import SemanticChunker
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.vectorstores import Chroma
 from embedding.json_to_docs import load_json, convert_json_to_documents
 from collections import defaultdict
