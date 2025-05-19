@@ -4,9 +4,10 @@ import networkx as nx
 import torch
 from tqdm import tqdm
 from langchain.schema import Document
+from langchain.text_splitter import MarkdownHeaderTextSplitter
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import Chroma
+from langchain_community.vectorstores import Chroma
 from embedding.json_to_docs import load_json
 
 synonym_dict = {
@@ -114,22 +115,27 @@ def generate_subgraph_conditions(cleaned_docs, top_n=5):
     return cond
 
 # 서브그래프 생성
-def create_subgraph(condition, cleaned_docs, save_dir):
-    os.makedirs(save_dir, exist_ok=True)
+def create_subgraph_and_embed(condition, cleaned_docs, graph_base_dir, chroma_base_dir, embedding_model):
+    # 정책 필터링
     filtered = filter_policies_by_query(
-        cleaned_docs, {"matched_main_keywords":[condition["keyword"]]},
+        cleaned_docs,
         target_region=condition["region"],
         target_main_categories=[condition["main_category"]],
         target_keywords=[condition["keyword"]]
     )
-    filtered=[d for d in filtered if d["region"]!="전국"]
-    if len(filtered)<5: return None
+    filtered = [d for d in filtered if d["region"] != "전국"]
+    if len(filtered) < 5:
+        print(f"[SKIP] {condition}: 정책수 부족")
+        return None
 
-    G=nx.Graph()
+    # 그래프(GML) 생성
+    G = nx.Graph()
     for d in filtered:
-        nid=d["plcyNo"]
+        nid = d["plcyNo"]
         G.add_node(nid,
-            doc_id=nid, policy_number=nid, policy_name=d.get("plcyNm",""),
+            doc_id=nid,
+            policy_number=nid,
+            policy_name=d.get("plcyNm",""),
             region=d["region"],
             policy_category=d["policy_category"],
             policy_subcategory=d["policy_subcategory"],
@@ -137,90 +143,121 @@ def create_subgraph(condition, cleaned_docs, save_dir):
             page_content=d.get("plcyExplnCn","")
         )
     for i,j in itertools.combinations(filtered,2):
-        shared=0
-        if set(i["main_category_list"]) & set(j["main_category_list"]): shared+=1
-        if set(i["sub_category_list"])  & set(j["sub_category_list"]):  shared+=1
-        if set(i["keyword_list"])       & set(j["keyword_list"]):       shared+=1
-        if shared: G.add_edge(i["plcyNo"], j["plcyNo"])
+        shared=(
+            bool(set(i["main_category_list"]) & set(j["main_category_list"])) +
+            bool(set(i["sub_category_list"])  & set(j["sub_category_list"])) +
+            bool(set(i["keyword_list"])       & set(j["keyword_list"]))
+        )
+        if shared:
+            G.add_edge(i["plcyNo"], j["plcyNo"])
 
-    if G.number_of_edges()<5: return None
+    if G.number_of_edges() < 5:
+        print(f"[SKIP] {condition}: 엣지수 부족")
+        return None
 
-    fname=f"policy_graph_{sanitize(condition['region'])}_{sanitize(condition['main_category'])}_{sanitize(condition['keyword'])}.gml"
-    nx.write_gml(G, os.path.join(save_dir,fname))
+    fname = f"policy_graph_{sanitize(condition['region'])}_{sanitize(condition['main_category'])}_{sanitize(condition['keyword'])}"
+    gml_path = os.path.join(graph_base_dir, fname + ".gml")
+    chroma_dir = os.path.join(chroma_base_dir, fname)
+
+    os.makedirs(os.path.dirname(gml_path), exist_ok=True)
+    nx.write_gml(G, gml_path)
+    chunk_and_embed(filtered, chroma_dir, embedding_model)
+    print(f"[OK] {fname}: 그래프/임베딩 저장 완료! ({len(filtered)}건)")
     return fname
 
-# 문서 -> 임베딩
-def documents_from_subgraphs(subgraph_dir):
-    docs=[]
-    for fn in os.listdir(subgraph_dir):
-        if not fn.endswith(".gml"): continue
-        G=nx.read_gml(os.path.join(subgraph_dir,fn))
-        edges=[f"{u} → {v}" for u,v in G.edges()]
-        docs.append(Document(
-            page_content=f"[서브그래프: {fn}]\n"+"\n".join(edges),
-            metadata={"subgraph_file":fn}))
-    return docs
+def chunk_and_embed(filtered_docs, vectorstore_dir, embedding_model):
+    """
+    - filtered_docs: 정책 dict 리스트 (서브그래프나 전체 필터 결과)
+    - vectorstore_dir: 저장할 Chroma 폴더
+    - embedding_model: 임베딩 모델 인스턴스
+    """
+    # LangChain Document 생성
+    documents = []
+    for d in filtered_docs:
+        content = d.get("plcyExplnCn", "").strip()
+        if not content:
+            continue
+        meta = {
+            "doc_id": d.get("plcyNo", ""),
+            "policy_name": d.get("plcyNm", ""),
+            "region": d.get("region", ""),
+            "policy_category": d.get("policy_category", ""),
+            "policy_subcategory": d.get("policy_subcategory", ""),
+            "policy_keywords": ",".join(d.get("keyword_list", []))
+        }
+        documents.append(Document(page_content=content, metadata=meta))
+    if not documents:
+        print(f" 임베딩할 문서 없음({vectorstore_dir})")
+        return
 
-def chunk_and_embed(docs, persist_dir):
-    os.makedirs(persist_dir, exist_ok=True)
-    embedder=HuggingFaceEmbeddings(
-        model_name="intfloat/multilingual-e5-large",
-        model_kwargs={"device":"cuda" if torch.cuda.is_available() else "cpu"},
-        encode_kwargs={"batch_size":32,"normalize_embeddings":True})
-  
-    splitter = SemanticChunker(embedder)
-    chunks = []
-    for doc in tqdm(docs, desc="서브그래프 -> 청크 분할"):
-        chunks.extend(splitter.split_documents([doc]))
-    Chroma.from_documents(chunks, embedder, persist_directory=str(persist_dir)).persist()
-    print("서브그래프 Chroma 임베딩 저장 완료 ->", persist_dir)
+    # 1차 분할
+    headers = [("#", "정책대분류"), ("##", "정책중분류"), ("###", "정책명")]
+    header_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers)
+    split_docs = []
+    for doc in documents:
+        result = header_splitter.split_text(doc.page_content)
+        for chunk in result:
+            if isinstance(chunk, Document):
+                # Document 타입이면 메타 유지(혹시 없으면 추가)
+                if not getattr(chunk, "metadata", None):
+                    chunk.metadata = doc.metadata.copy()
+                split_docs.append(chunk)
+            else:
+                # str 타입이면 meta 붙여서 Document 생성
+                split_docs.append(Document(page_content=chunk, metadata=doc.metadata.copy()))
+           
+    # 2차 분할
+    semantic_splitter = SemanticChunker(embedding_model)
+    final_chunks = []
+    for doc in split_docs:
+        final_chunks.extend(semantic_splitter.split_documents([doc]))
+
+    if not final_chunks:
+        print(f"임베딩할 청크 없음({vectorstore_dir})")
+        return
+
+    # Chroma 임베딩 저장
+    os.makedirs(vectorstore_dir, exist_ok=True)
+    vectorstore = Chroma.from_documents(
+        documents=final_chunks,
+        embedding=embedding_model,
+        persist_directory=vectorstore_dir
+    )
+    vectorstore.persist()
+    print(f" {vectorstore_dir}: 임베딩/저장 완료! (청크 {len(final_chunks)}개)")
+
 
 # main
 def main():
     t0 = time.time()
-    script=os.path.abspath(__file__)
-    root  = os.path.dirname(os.path.dirname(script))   # embedding/
-    data_path = os.path.join(os.path.dirname(root), "data", "YouthPolicy_data.json")
-    save_graph_dir = os.path.join(os.path.dirname(root), "Graph","subgraphs")
-    persist_dir    = os.path.join(os.path.dirname(root), "chroma_db","Graph_sub_separate")
+    script = os.path.abspath(__file__)
+    root   = os.path.dirname(os.path.dirname(script))   # embedding/
+    project_root = os.path.dirname(root)                # Korea-YouthPolicy-Chatbot/
+    data_path    = os.path.join(project_root, "data", "YouthPolicy_data.json")
+    save_graph_dir = os.path.join(project_root, "graph", "subgraphs")
+    persist_dir    = os.path.join(project_root, "chroma_db", "Graph_sub_separate")
 
-    cleaned=[preprocess_policy_fields(p) for p in load_json(data_path)]
-    conditions = generate_subgraph_conditions(cleaned, top_n=5)
-    for cond in tqdm(conditions, desc="서브그래프 생성"):
-        create_subgraph(cond, cleaned, save_graph_dir)
+    if not os.path.isfile(data_path):
+        raise FileNotFoundError(f"데이터 파일이 존재하지 않습니다: {data_path}")
+    graph_base_dir = os.path.join(project_root, "graph", "subgraphs")
+    chroma_base_dir = os.path.join(project_root, "chroma_db", "Graph_sub_separate")
 
-    docs=documents_from_subgraphs(save_graph_dir)
-    chunk_and_embed(docs, persist_dir)
-    print(f"\n SubGraph 파이프라인 완료! ({time.time()-t0:,.1f}s)")
-    
+    # 임베딩 모델 준비
+    embedder = HuggingFaceEmbeddings(
+        model_name="intfloat/multilingual-e5-large",
+        model_kwargs={"device":"cuda" if torch.cuda.is_available() else "cpu"},
+        encode_kwargs={"batch_size":32,"normalize_embeddings":True}
+    )
+
+    # 데이터 로딩 및 전처리
+    data = load_json(data_path)
+    cleaned = [preprocess_policy_fields(p) for p in data]
+    conditions = generate_subgraph_conditions(cleaned, top_n=5)  # 상위 빈도 기준
+
+    # 실제 서브그래프/임베딩 반복
+    for cond in tqdm(conditions, desc="서브그래프 생성+임베딩"):
+        create_subgraph_and_embed(cond, cleaned, graph_base_dir, chroma_base_dir, embedder)
+        
+        
 if __name__=="__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
