@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Dict, Any, List
-
+import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from langchain.chains import LLMChain
