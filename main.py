@@ -1,8 +1,11 @@
 import argparse
+import os
+from dotenv import load_dotenv
+load_dotenv()
 from chatbot.server import chat_cli, chat_gradio
 
-
 def main() -> None:
+    
     parser = argparse.ArgumentParser(description="Korea YouthPolicy Chatbot")
     parser.add_argument("--gradio", action="store_true", help="Gradio 웹 UI 실행")
     parser.add_argument("--host", default="0.0.0.0", help="Gradio host (기본 0.0.0.0)")
