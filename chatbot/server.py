@@ -22,10 +22,10 @@ def chat_cli() -> None:
 # ────────────────────────────────────────────────
 # 2) Gradio Web UI
 # ----------------------------------------------
-def chat_gradio(host: str = "0.0.0.0", port: int = 7860) -> None:
+def chat_gradio(host: str = "localhost", port: int = 7860) -> None:
     import gradio as gr
 
-    def _gr_answer(msg: str) -> str:
+    def _gr_answer(msg: str, state=None) -> str: 
         return qa_chain.run(msg)
 
     with gr.Blocks(title="Korea YouthPolicy Chatbot") as demo:
