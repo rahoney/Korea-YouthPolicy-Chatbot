@@ -22,7 +22,7 @@
 ![Architecture](img/Chatbot-Architecture.jpg)
 
 ---
-## 🚀 챗봇 작동 예시
+## 챗봇 작동 예시
 
 아래는 실제 청년정책 챗봇을 이용하여 정책을 검색한 예시입니다.
 
