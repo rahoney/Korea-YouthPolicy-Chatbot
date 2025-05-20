@@ -126,6 +126,19 @@ python main.py
 ## 📞 문의
 
 [LinkedIn](www.linkedin.com/in/raheun-g-1066171b8)
+
 ---
+### 라이선스 
+
+본 프로젝트는 **GNU GPL-3.0 License** 라이선스 하에 배포됩니다.
+
+Copyright (C) 2024 rahoney  
+Contact: [GitHub](https://github.com/rahoney) 
+
+이 프로젝트는 GNU GPL-3.0 라이선스를 따릅니다.  
+자세한 내용은 [LICENSE.txt](./LICENSE.txt) 파일을 참고하세요.
+
+
+
 
 **감사합니다! 😊**
