@@ -1,7 +1,8 @@
 import argparse
 import os
 from dotenv import load_dotenv
-load_dotenv()
+dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+load_dotenv(dotenv_path)
 from chatbot.server import chat_cli, chat_gradio
 
 def main() -> None:
