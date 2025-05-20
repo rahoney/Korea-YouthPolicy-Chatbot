@@ -105,10 +105,15 @@ Korea-YouthPolicy-Chatbot/
 
 ### 환경 설정
 
+* 프로젝트 클론
+* requirements 설치
 ```bash
 pip install -r requirements.txt
 ```
-
+* `.env` 파일을 프로젝트 루트에 생성
+```bash
+GOOGLE_API_KEY=발급받은_API_키_입력
+```
 ### 임베딩 생성
 
 ```bash
