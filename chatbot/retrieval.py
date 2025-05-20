@@ -207,24 +207,39 @@ def hybrid_retrieve(query: str, k: int = 5) -> List[Document]:
     3) 부족하면 FullGraph → MMR
     4) MMR docs==0 → 동일 DB similarity_search로 fallback
     """
+    if not isinstance(query, str):
+        query = str(query) if query is not None else ""
+    if not query.strip():
+        return []
+        
     parsed = parse_user_query(query)
     allowed_ids = {
         d["plcyNo"] for d in filter_policies_by_query(parsed, cleaned_documents)
     }
     where = {"doc_id": {"$in": list(allowed_ids)}} if allowed_ids else {}
 
-    # ── 1단계: SubGraph DB ───────────────────────
+    # ── 1단계: SubGraph DB 조건검색
     docs = _mmr_search(sub_store, query, k, where)
     if len(docs) >= k:                # 충분하면 그대로 반환
         return docs
 
-    # ── 2단계: FullGraph DB ─────────────────────
-    docs = _mmr_search(full_store, query, k, where)
-    return docs
+    # ── 2단계: FullGraph DB 조건검색
+    docs2 = _mmr_search(full_store, query, k, where)
+    return docs2
+
+    # 3단계: FullGraph DB (where 조건 제거) -> "유사 정책" 추천
+    docs3 = _mmr_search(full_store, query, k, {})
+    if docs3:
+        return docs3
 
 
 def _mmr_search(store: Chroma, q: str, k: int, where: dict) -> List[Document]:
     """MMR + 내부 fallback(similarity_search) 한 번만 래핑"""
+    if not isinstance(query, str):
+        query = str(query) if query is not None else ""
+    if not query.strip():
+        return []
+        
     retriever = store.as_retriever(
         search_type="mmr",
         search_kwargs={"k": k, "fetch_k": k * 4, "where": where},
